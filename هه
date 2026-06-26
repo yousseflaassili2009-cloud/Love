@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Coding Bouquet</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: radial-gradient(circle at center, #1a1525 0%, #0c0813 100%);
+            min-height: 100vh;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        canvas {
+            display: block;
+            max-width: 100%;
+            max-height: 100vh;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
+        }
+
+        #replay-btn {
+            position: absolute;
+            bottom: 30px;
+            padding: 12px 24px;
+            background: linear-gradient(45deg, #ff4e50, #f9d423);
+            border: none;
+            border-radius: 25px;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(255, 78, 80, 0.4);
+            transition: transform 0.2s, box-shadow 0.2s;
+            opacity: 0;
+            animation: fadeIn 1s ease 5s forwards;
+        }
+
+        #replay-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(255, 78, 80, 0.6);
+        }
+
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="bouquetCanvas"></canvas>
+    <button id="replay-btn" onclick="resetAnimation()">أعد العرض ✨</button>
+
+    <script>
+        const canvas = document.getElementById('bouquetCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // إعدادات الشاشة لتكون متناسقة وعالية الجودة (HD)
+        function resize() {
+            canvas.width = window.innerWidth < 800 ? window.innerWidth : 800;
+            canvas.height = window.innerHeight < 800 ? window.innerHeight : 800;
+        }
+        resize();
+
+        let stems = [];
+        let flowers = [];
+        let particles = [];
+        let animationFrameId;
+
+        // الألوان المستعملة للورد
+        const flowerColors = [
+            { petal: '#ff4b72', center: '#f9d423', type: 'tulip' },    // توليب وردي
+            { petal: '#ff9f43', center: '#573d1c', type: 'sunflower'},// عباد الشمس
+            { petal: '#ffffff', center: '#ffbe1a', type: 'lily' },     // زنبق أبيض
+            { petal: '#a55eea', center: '#fffa65', type: 'cosmos' },   // بنفسجي
+            { petal: '#ff6b6b', center: '#feca57', type: 'rose' }      // أحمر رومانسي
+        ];
+
+        class Stem {
+            constructor(startX, startY, endX, endY, delay) {
+                this.startX = startX;
+                this.startY = startY;
+                this.endX = endX;
+                this.endY = endY;
+                this.currentX = startX;
+                this.currentY = startY;
+                this.progress = 0;
+                this.speed = 0.015 + Math.random() * 0.01;
+                this.delay = delay;
+                this.controlX = startX + (endX - startX) / 2 + (Math.random() - 0.5) * 100;
+                this.controlY = startY + (endY - startY) / 2 - Math.random() * 50;
+            }
+
+            update() {
+                if (this.delay > 0) {
+                    this.delay--;
+                    return false;
+                }
+                if (this.progress < 1) {
+                    this.progress += this.speed;
+                    if (this.progress > 1) this.progress = 1;
+                    
+                    // حساب مسار منحني (Bezier Curve) مائل ليعطي شكل باقة طبيعية
+                    const t = this.progress;
+                    this.currentX = (1 - t) * (1 - t) * this.startX + 2 * (1 - t) * t * this.controlX + t * t * this.endX;
+                    this.currentY = (1 - t) * (1 - t) * this.startY + 2 * (1 - t) * t * this.controlY + t * t * this.endY;
+                    return false;
+                }
+                return true; // اكتمل نمو الغصن
+            }
+
+            draw() {
+                if (this.progress === 0) return;
+                ctx.beginPath();
+                ctx.moveTo(this.startX, this.startY);
+                
+                // رسم الغصن بناء على التقدم الحالي للأنيميشن
+                const t = this.progress;
+                ctx.quadraticCurveTo(this.controlX, this.controlY, this.currentX, this.currentY);
+                
+                ctx.strokeStyle = '#2d5a27';
+                ctx.lineWidth = 4 * (1 - t * 0.3); // الغصن يرق كلما صعد للأعلى
+                ctx.lineCap = 'round';
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = 'rgba(0,0,0,0.3)';
+                ctx.stroke();
+                ctx.shadowBlur = 0; // إعادة تعيين الظل لكي لا يؤثر على الباقي
+            }
+        }
+
+        class Flower {
+            constructor(x, y, colorObj) {
+                this.x = x;
+                this.y = y;
+                this.color = colorObj.petal;
+                this.centerColor = colorObj.center;
+                this.type = colorObj.type;
+                this.size = 0;
+                this.maxSize = 25 + Math.random() * 15;
+                this.growthSpeed = 0.5 + Math.random() * 0.5;
+                this.rotation = Math.random() * Math.PI;
+                this.petalCount = this.type === 'sunflower' ? 16 : (this.type === 'lily' ? 6 : 8);
+            }
+
+            update() {
+                if (this.size < this.maxSize) {
+                    this.size += this.growthSpeed;
+                    // إنتاج جزيئات لمعان أثناء التفتح
+                    if (Math.random() < 0.3) {
+                        particles.push(new Particle(this.x, this.y, this.color));
+                    }
+                }
+            }
+
+            draw() {
+                if (this.size <= 0) return;
+
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+
+                // رسم بتلات الوردة حسب نوعها الهندسي
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+
+                for (let i = 0; i < this.petalCount; i++) {
+                    ctx.rotate((Math.PI * 2) / this.petalCount);
+                    ctx.beginPath();
+                    
+                    if (this.type === 'tulip') {
+                        ctx.moveTo(0, 0);
+                        ctx.bezierCurveTo(-this.size/2, -this.size, this.size/2, -this.size, 0, -this.size * 1.3);
+                    } else if (this.type === 'sunflower') {
+                        ctx.moveTo(0, 0);
+                        ctx.lineTo(-this.size/4, -this.size);
+                        ctx.lineTo(0, -this.size * 1.2);
+                        ctx.lineTo(this.size/4, -this.size);
+                    } else { // كوزموس أو روز عادي
+                        ctx.ellipse(0, -this.size/2, this.size/2.5, this.size, 0, 0, Math.PI * 2);
+                    }
+                    ctx.fill();
+                }
+
+                // قلب الوردة (المركز)
+                ctx.beginPath();
+                ctx.arc(0, 0, this.size * 0.3, 0, Math.PI * 2);
+                ctx.fillStyle = this.centerColor;
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = '#000';
+                ctx.fill();
+
+                ctx.restore();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.vx = (Math.random() - 0.5) * 2;
+                this.vy = (Math.random() - 0.5) * 2 - 1;
+                this.alpha = 1;
+                this.size = Math.random() * 3 + 1;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.alpha -= 0.01;
+            }
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function init() {
+            stems = [];
+            flowers = [];
+            particles = [];
+            
+            const baseCulmX = canvas.width / 2;
+            const baseCulmY = canvas.height - 50;
+
+            // توليد الورد بشكل عشوائي ومنظم ليعطي شكل باقة دائرية متناسقة
+            for (let i = 0; i < 18; i++) {
+                const angle = (-Math.PI / 2) + (Math.random() - 0.5) * 1.2; 
+                const length = canvas.height * 0.4 + Math.random() * 150;
+                
+                const targetX = baseCulmX + Math.cos(angle) * length;
+                const targetY = canvas.height * 0.5 + Math.sin(angle) * (length * 0.5) - 50;
+                
+                const delay = Math.random() * 60; // توزيع وقت بدء النمو
+                
+                const stem = new Stem(baseCulmX, baseCulmY, targetX, targetY, delay);
+                const colorConfig = flowerColors[Math.floor(Math.random() * flowerColors.length)];
+                
+                stems.push({ stem, targetX, targetY, colorConfig, flowerSpawned: false });
+            }
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // تحديث ورسم الأغصان
+            stems.forEach(item => {
+                const completed = item.update();
+                item.draw();
+
+                // إذا اكتمل الغصن ولم تظهر الوردة بعد، نقوم بإنشائها
+                if (completed && !item.flowerSpawned) {
+                    flowers.push(new Flower(item.targetX, item.targetY, item.colorConfig));
+                    item.flowerSpawned = true;
+                }
+            });
+
+            // تحديث ورسم الورود
+            flowers.forEach(flower => {
+                flower.update();
+                flower.draw();
+            });
+
+            // تحديث ورسم جزيئات اللمعان المتطايرة
+            particles = particles.filter(p => p.alpha > 0);
+            particles.forEach(p => {
+                p.update();
+                p.draw();
+            });
+
+            animationFrameId = requestAnimationFrame(animate);
+        }
+
+        function resetAnimation() {
+            cancelAnimationFrame(animationFrameId);
+            init();
+            animate();
+        }
+
+        // انطلاق الأنيميشن لأول مرة
+        init();
+        animate();
+
+        // إعادة ضبط الحجم إذا تغيرت أبعاد الشاشة
+        window.addEventListener('resize', () => {
+            resize();
+            resetAnimation();
+        });
+    </script>
+</body>
+</html>
